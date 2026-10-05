@@ -1,0 +1,85 @@
+name: Build APK (Debug)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+# Debug builds do not publish Releases and do not need write access.
+permissions:
+  contents: read
+
+concurrency:
+  group: tazieh-debug-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle 8.6
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.6'
+
+      - name: Build Admin Debug APK
+        run: gradle :app:assembleAdminDebug -PreleaseNumber=$GITHUB_RUN_NUMBER --stacktrace --warning-mode all
+
+      - name: Build Viewer Debug APK
+        run: gradle :app:assembleViewerDebug -PreleaseNumber=$GITHUB_RUN_NUMBER --stacktrace --warning-mode all
+
+      - name: Verify APKs and Viewer assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAPT="$(find "${ANDROID_HOME}/build-tools" -maxdepth 2 -type f -name aapt -perm -111 2>/dev/null | sort -V | tail -n 1)"
+          test -n "$AAPT" && test -x "$AAPT"
+          EXPECTED="${GITHUB_RUN_NUMBER}"
+          for APK in app/build/outputs/apk/admin/debug/app-admin-debug.apk app/build/outputs/apk/viewer/debug/app-viewer-debug.apk; do
+            test -f "$APK"
+            BADGING="$($AAPT dump badging "$APK")"
+            CODE="$(printf '%s\n' "$BADGING" | grep -oE "versionCode='[0-9]+'" | head -n1 | sed "s/versionCode='//;s/'//")"
+            test "$CODE" = "$EXPECTED"
+          done
+          unzip -l app/build/outputs/apk/viewer/debug/app-viewer-debug.apk | grep -F 'assets/content/001_sample.taz'
+          if unzip -l app/build/outputs/apk/viewer/debug/app-viewer-debug.apk | grep -E 'assets/content/.*\.json' >/dev/null; then
+            echo 'ERROR: plaintext JSON content was packaged in Viewer APK.'
+            exit 1
+          fi
+          echo 'Debug APK verification passed.'
+
+      - name: Upload Admin APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tazieh-admin-debug-apk-${{ github.run_id }}
+          path: app/build/outputs/apk/admin/debug/app-admin-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Viewer APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tazieh-viewer-debug-apk-${{ github.run_id }}
+          path: app/build/outputs/apk/viewer/debug/app-viewer-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-build-reports-${{ github.run_id }}
+          path: |
+            **/build/reports/**
+            **/build/outputs/logs/**
+          if-no-files-found: ignore
+          retention-days: 7
