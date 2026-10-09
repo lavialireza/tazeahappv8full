@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- This signature permission belongs only to the Admin application. -->
+    <permission
+        android:name="com.example.bookapp.permission.POLICY_APPLIED"
+        android:protectionLevel="signature" />
+
+    <application>
+        <!-- Only Admin accepts applied-policy receipts. -->
+        <receiver
+            android:name="com.example.bookapp.PolicyAppliedReceiver"
+            android:exported="true"
+            android:permission="com.example.bookapp.permission.POLICY_APPLIED">
+            <intent-filter>
+                <action android:name="com.example.bookapp.POLICY_APPLIED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

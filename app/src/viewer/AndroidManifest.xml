@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Admin owns this signature permission; Viewer must be signed with the same certificate. -->
+    <uses-permission android:name="com.example.bookapp.permission.POLICY_APPLIED" />
     <!-- Viewer uses internet only for manual/optional app update checks. Normal reading remains offline. -->
     <application>
         <receiver android:name="com.example.bookapp.PolicyChangedReceiver" android:exported="true">
