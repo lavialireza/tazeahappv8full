@@ -1,9 +1,8 @@
 
 name: Release and Publish Update
 
-# انتشار فقط با اجرای دستی از تب Actions انجام می‌شود.
-# این Workflow APKها را می‌سازد، امضاها را بررسی می‌کند و سپس
-# فایل‌ها و manifestها را در مخزن به‌روزرسانی منتشر می‌کند.
+# Build, sign, verify, and publish Admin and Viewer APKs.
+# Publishing is manual and runs only from the Actions tab.
 
 on:
   workflow_dispatch:
@@ -17,7 +16,9 @@ on:
         required: true
         default: "false"
         type: choice
-        options: ["false", "true"]
+        options:
+          - "false"
+          - "true"
       min_supported_version:
         description: "حداقل versionCode مجاز؛ صفر یعنی بدون محدودیت"
         required: false
@@ -36,9 +37,15 @@ jobs:
     environment: production
 
     steps:
+      # --------------------------------------------------
+      # 1. Checkout source repository
+      # --------------------------------------------------
       - name: Checkout source repo
         uses: actions/checkout@v4
 
+      # --------------------------------------------------
+      # 2. Validate required configuration
+      # --------------------------------------------------
       - name: Check required secrets and variables
         shell: bash
         env:
@@ -46,22 +53,28 @@ jobs:
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+
           RELEASE_VIEWER_KEYSTORE_BASE64: ${{ secrets.RELEASE_VIEWER_KEYSTORE_BASE64 }}
           RELEASE_VIEWER_STORE_PASSWORD: ${{ secrets.RELEASE_VIEWER_STORE_PASSWORD }}
           RELEASE_VIEWER_KEY_ALIAS: ${{ secrets.RELEASE_VIEWER_KEY_ALIAS }}
           RELEASE_VIEWER_KEY_PASSWORD: ${{ secrets.RELEASE_VIEWER_KEY_PASSWORD }}
+
           UPDATES_REPO_TOKEN: ${{ secrets.UPDATES_REPO_TOKEN }}
+
           UPDATES_REPO: ${{ vars.UPDATES_REPO }}
           UPDATE_BASE_URL_ADMIN: ${{ vars.UPDATE_BASE_URL_ADMIN }}
           UPDATE_BASE_URL_VIEWER: ${{ vars.UPDATE_BASE_URL_VIEWER }}
+
         run: |
           set -euo pipefail
+
           missing=""
 
           [ -z "${RELEASE_KEYSTORE_BASE64:-}" ] && missing="$missing RELEASE_KEYSTORE_BASE64"
           [ -z "${RELEASE_STORE_PASSWORD:-}" ] && missing="$missing RELEASE_STORE_PASSWORD"
           [ -z "${RELEASE_KEY_ALIAS:-}" ] && missing="$missing RELEASE_KEY_ALIAS"
           [ -z "${RELEASE_KEY_PASSWORD:-}" ] && missing="$missing RELEASE_KEY_PASSWORD"
+
           [ -z "${UPDATES_REPO_TOKEN:-}" ] && missing="$missing UPDATES_REPO_TOKEN"
           [ -z "${UPDATES_REPO:-}" ] && missing="$missing UPDATES_REPO"
           [ -z "${UPDATE_BASE_URL_ADMIN:-}" ] && missing="$missing UPDATE_BASE_URL_ADMIN"
@@ -74,7 +87,7 @@ jobs:
           fi
 
           if [ -n "$missing" ]; then
-            echo "ERROR: موارد زیر در Settings -> Secrets and variables تنظیم نشده‌اند:"
+            echo "ERROR: Missing required secrets or variables:"
             for item in $missing; do
               echo " - $item"
             done
@@ -83,6 +96,9 @@ jobs:
 
           echo "Required secrets and variables are configured."
 
+      # --------------------------------------------------
+      # 3. Java and Gradle
+      # --------------------------------------------------
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -94,6 +110,9 @@ jobs:
         with:
           gradle-version: "8.6"
 
+      # --------------------------------------------------
+      # 4. Decode signing keys
+      # --------------------------------------------------
       - name: Decode release keystore(s)
         shell: bash
         env:
@@ -101,20 +120,26 @@ jobs:
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+
           RELEASE_VIEWER_KEYSTORE_BASE64: ${{ secrets.RELEASE_VIEWER_KEYSTORE_BASE64 }}
           RELEASE_VIEWER_STORE_PASSWORD: ${{ secrets.RELEASE_VIEWER_STORE_PASSWORD }}
           RELEASE_VIEWER_KEY_ALIAS: ${{ secrets.RELEASE_VIEWER_KEY_ALIAS }}
           RELEASE_VIEWER_KEY_PASSWORD: ${{ secrets.RELEASE_VIEWER_KEY_PASSWORD }}
+
         run: |
           set -euo pipefail
+
           mkdir -p ci
 
-          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > ci/release-signing.jks
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" |
+            base64 --decode > ci/release-signing.jks
+
           test -s ci/release-signing.jks
 
           if [ -n "${RELEASE_VIEWER_KEYSTORE_BASE64:-}" ]; then
             printf '%s' "$RELEASE_VIEWER_KEYSTORE_BASE64" |
-              base64 -d > ci/release-viewer-signing.jks
+              base64 --decode > ci/release-viewer-signing.jks
+
             test -s ci/release-viewer-signing.jks
 
             {
@@ -122,6 +147,12 @@ jobs:
               echo "RELEASE_VIEWER_STORE_PASSWORD=${RELEASE_VIEWER_STORE_PASSWORD}"
               echo "RELEASE_VIEWER_KEY_ALIAS=${RELEASE_VIEWER_KEY_ALIAS}"
               echo "RELEASE_VIEWER_KEY_PASSWORD=${RELEASE_VIEWER_KEY_PASSWORD}"
+
+              # Generic signing variables used by the Viewer Gradle task.
+              echo "RELEASE_STORE_FILE=${GITHUB_WORKSPACE}/ci/release-viewer-signing.jks"
+              echo "RELEASE_STORE_PASSWORD=${RELEASE_VIEWER_STORE_PASSWORD}"
+              echo "RELEASE_KEY_ALIAS=${RELEASE_VIEWER_KEY_ALIAS}"
+              echo "RELEASE_KEY_PASSWORD=${RELEASE_VIEWER_KEY_PASSWORD}"
             } >> "$GITHUB_ENV"
 
             echo "Viewer will use its separate release keystore."
@@ -131,11 +162,20 @@ jobs:
               echo "RELEASE_VIEWER_STORE_PASSWORD=${RELEASE_STORE_PASSWORD}"
               echo "RELEASE_VIEWER_KEY_ALIAS=${RELEASE_KEY_ALIAS}"
               echo "RELEASE_VIEWER_KEY_PASSWORD=${RELEASE_KEY_PASSWORD}"
+
+              # Generic signing variables used by the Viewer Gradle task.
+              echo "RELEASE_STORE_FILE=${GITHUB_WORKSPACE}/ci/release-signing.jks"
+              echo "RELEASE_STORE_PASSWORD=${RELEASE_STORE_PASSWORD}"
+              echo "RELEASE_KEY_ALIAS=${RELEASE_KEY_ALIAS}"
+              echo "RELEASE_KEY_PASSWORD=${RELEASE_KEY_PASSWORD}"
             } >> "$GITHUB_ENV"
 
             echo "Viewer will use the Admin release keystore."
           fi
 
+      # --------------------------------------------------
+      # 5. Build Admin APK
+      # --------------------------------------------------
       - name: Build Admin Release APK
         env:
           RELEASE_STORE_FILE: ${{ github.workspace }}/ci/release-signing.jks
@@ -144,35 +184,55 @@ jobs:
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           POLICY_PUBLIC_KEY: ${{ vars.POLICY_PUBLIC_KEY }}
           ADMIN_POLICY_PRIVATE_KEY: ${{ secrets.ADMIN_POLICY_PRIVATE_KEY }}
+
         run: |
           set -euo pipefail
-          gradle :app:assembleAdminRelease \
-            -PreleaseNumber="$GITHUB_RUN_NUMBER" --stacktrace
 
+          gradle :app:assembleAdminRelease \
+            -PreleaseNumber="$GITHUB_RUN_NUMBER" \
+            --stacktrace
+
+      # --------------------------------------------------
+      # 6. Build Viewer APK using the selected Viewer key
+      # --------------------------------------------------
       - name: Build Viewer Release APK
         env:
-          RELEASE_STORE_FILE: ${{ env.RELEASE_VIEWER_STORE_FILE }}
-          RELEASE_STORE_PASSWORD: ${{ env.RELEASE_VIEWER_STORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ env.RELEASE_VIEWER_KEY_ALIAS }}
-          RELEASE_KEY_PASSWORD: ${{ env.RELEASE_VIEWER_KEY_PASSWORD }}
           POLICY_PUBLIC_KEY: ${{ vars.POLICY_PUBLIC_KEY }}
+
         run: |
           set -euo pipefail
-          gradle :app:assembleViewerRelease \
-            -PreleaseNumber="$GITHUB_RUN_NUMBER" --stacktrace
 
+          # RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD,
+          # RELEASE_KEY_ALIAS and RELEASE_KEY_PASSWORD are
+          # provided by the keystore selection step above.
+
+          test -n "${RELEASE_STORE_FILE:-}"
+          test -n "${RELEASE_STORE_PASSWORD:-}"
+          test -n "${RELEASE_KEY_ALIAS:-}"
+          test -n "${RELEASE_KEY_PASSWORD:-}"
+
+          gradle :app:assembleViewerRelease \
+            -PreleaseNumber="$GITHUB_RUN_NUMBER" \
+            --stacktrace
+
+      # --------------------------------------------------
+      # 7. Verify signatures and compare certificate SHA-256
+      # --------------------------------------------------
       - name: Verify APK signatures and certificate fingerprints
         shell: bash
         env:
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+
           RELEASE_VIEWER_STORE_PASSWORD: ${{ secrets.RELEASE_VIEWER_STORE_PASSWORD }}
           RELEASE_VIEWER_KEY_ALIAS: ${{ secrets.RELEASE_VIEWER_KEY_ALIAS }}
+
         run: |
           set -euo pipefail
 
           ADMIN_KEYSTORE="ci/release-signing.jks"
           VIEWER_KEYSTORE="ci/release-viewer-signing.jks"
+
           ADMIN_APK="app/build/outputs/apk/admin/release/app-admin-release.apk"
           VIEWER_APK="app/build/outputs/apk/viewer/release/app-viewer-release.apk"
 
@@ -180,26 +240,37 @@ jobs:
           test -s "$ADMIN_APK"
           test -s "$VIEWER_APK"
 
-          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" \
-            -type f -name apksigner -perm -111 2>/dev/null |
-            sort -V | tail -n 1)"
+          APKSIGNER="$(
+            find "${ANDROID_HOME}/build-tools" \
+              -type f -name apksigner -perm -111 2>/dev/null |
+              sort -V |
+              tail -n 1
+          )"
 
           if [ -z "$APKSIGNER" ] || [ ! -x "$APKSIGNER" ]; then
             echo "ERROR: apksigner was not found."
             exit 1
           fi
 
+          # Read the expected SHA-256 fingerprint from a keystore.
           certificate_sha256() {
-            local output
-            output="$(keytool -list -v \
-              -keystore "$1" \
-              -storepass "$2" \
-              -alias "$3")"
+            local output fingerprint
 
-            printf '%s\n' "$output" |
-              sed -n 's/^[[:space:]]*SHA256: //p' |
-              head -n 1 |
-              tr -d ':' |
+            output="$(
+              keytool -list -v \
+                -keystore "$1" \
+                -storepass "$2" \
+                -alias "$3"
+            )"
+
+            fingerprint="$(
+              printf '%s\n' "$output" |
+                sed -n 's/^[[:space:]]*SHA256: *//p' |
+                sed -n '1p'
+            )"
+
+            printf '%s' "$fingerprint" |
+              tr -d ':[:space:]' |
               tr '[:upper:]' '[:lower:]'
           }
 
@@ -210,53 +281,84 @@ jobs:
             local alias="$4"
             local expected signer_output actual
 
-            expected="$(certificate_sha256 "$keystore" "$password" "$alias")"
+            expected="$(
+              certificate_sha256 "$keystore" "$password" "$alias"
+            )"
 
             if [ -z "$expected" ]; then
               echo "ERROR: Cannot read expected SHA-256 certificate fingerprint."
+              echo "Keystore: $keystore"
+              echo "Alias: $alias"
               return 1
             fi
 
+            # Confirm that the APK signature itself is valid.
             "$APKSIGNER" verify --verbose --print-certs "$apk"
 
-            signer_output="$("$APKSIGNER" verify --print-certs "$apk" 2>&1)"
-            actual="$(printf '%s\n' "$signer_output" |
-              sed -n 's/.*Signer #1 certificate SHA-256 digest: //p' |
-              head -n 1 |
-              tr -d ':' |
-              tr '[:upper:]' '[:lower:]')"
+            # Support both common output formats:
+            # "Signer #1 certificate SHA-256 digest: ..."
+            # "V2 Signer: certificate SHA-256 digest: ..."
+            signer_output="$(
+              "$APKSIGNER" verify --print-certs "$apk" 2>&1
+            )"
+
+            actual="$(
+              printf '%s\n' "$signer_output" |
+                sed -n \
+                  's/.*certificate SHA-256 digest:[[:space:]]*//Ip' |
+                sed -n '1p' |
+                tr -d ':[:space:]' |
+                tr '[:upper:]' '[:lower:]'
+            )"
 
             if [ -z "$actual" ]; then
-              echo "ERROR: Could not read APK signer certificate fingerprint: $apk"
+              echo "ERROR: Could not read APK signer certificate fingerprint:"
+              echo "$apk"
+              echo "apksigner output did not contain a readable SHA-256 digest."
+              echo "Diagnostic output follows:"
+              printf '%s\n' "$signer_output"
               return 1
             fi
 
+            echo "Expected certificate SHA-256: $expected"
+            echo "Actual certificate SHA-256:   $actual"
+
             if [ "$actual" != "$expected" ]; then
-              echo "ERROR: APK certificate does not match the expected release key: $apk"
+              echo "ERROR: APK certificate does not match the expected release key:"
+              echo "$apk"
               echo "Publication blocked."
               return 1
             fi
 
-            echo "PASS: APK signature verified and SHA-256 certificate matched: $apk"
+            echo "PASS: APK signature verified and SHA-256 certificate matched:"
+            echo "$apk"
           }
 
-          verify_apk "$ADMIN_APK" \
+          # Verify Admin APK against the Admin release key.
+          verify_apk \
+            "$ADMIN_APK" \
             "$ADMIN_KEYSTORE" \
             "$RELEASE_STORE_PASSWORD" \
             "$RELEASE_KEY_ALIAS"
 
+          # Verify Viewer against the key selected during the build.
           if [ -s "$VIEWER_KEYSTORE" ]; then
-            verify_apk "$VIEWER_APK" \
+            verify_apk \
+              "$VIEWER_APK" \
               "$VIEWER_KEYSTORE" \
               "$RELEASE_VIEWER_STORE_PASSWORD" \
               "$RELEASE_VIEWER_KEY_ALIAS"
           else
-            verify_apk "$VIEWER_APK" \
+            verify_apk \
+              "$VIEWER_APK" \
               "$ADMIN_KEYSTORE" \
               "$RELEASE_STORE_PASSWORD" \
               "$RELEASE_KEY_ALIAS"
           fi
 
+      # --------------------------------------------------
+      # 8. Remove decoded signing keys
+      # --------------------------------------------------
       - name: Remove decoded keystore(s)
         if: always()
         shell: bash
@@ -264,22 +366,34 @@ jobs:
           rm -f ci/release-signing.jks ci/release-viewer-signing.jks
           rmdir ci 2>/dev/null || true
 
+      # --------------------------------------------------
+      # 9. Check APK files
+      # --------------------------------------------------
       - name: Verify Release APK files exist
         shell: bash
         run: |
           set -euo pipefail
+
           test -s app/build/outputs/apk/admin/release/app-admin-release.apk
           test -s app/build/outputs/apk/viewer/release/app-viewer-release.apk
 
+          echo "Both release APK files exist."
+
+      # --------------------------------------------------
+      # 10. Locate Android aapt
+      # --------------------------------------------------
       - name: Locate aapt
         id: aapt
         shell: bash
         run: |
           set -euo pipefail
 
-          AAPT="$(find "${ANDROID_HOME}/build-tools" \
-            -maxdepth 2 -type f -name aapt -perm -111 2>/dev/null |
-            sort -V | tail -n 1)"
+          AAPT="$(
+            find "${ANDROID_HOME}/build-tools" \
+              -maxdepth 2 -type f -name aapt -perm -111 2>/dev/null |
+              sort -V |
+              tail -n 1
+          )"
 
           if [ -z "$AAPT" ] || [ ! -x "$AAPT" ]; then
             echo "ERROR: Android aapt was not found."
@@ -288,17 +402,23 @@ jobs:
 
           echo "aapt_path=$AAPT" >> "$GITHUB_OUTPUT"
 
+      # --------------------------------------------------
+      # 11. Generate manifests from the signed APKs
+      # --------------------------------------------------
       - name: Generate update.json manifests from signed APKs
         shell: bash
         env:
           AAPT: ${{ steps.aapt.outputs.aapt_path }}
           UPDATE_BASE_URL_ADMIN: ${{ vars.UPDATE_BASE_URL_ADMIN }}
           UPDATE_BASE_URL_VIEWER: ${{ vars.UPDATE_BASE_URL_VIEWER }}
+
           RELEASE_NOTES: ${{ github.event.inputs.release_notes }}
           FORCE_UPDATE: ${{ github.event.inputs.force_update }}
           MIN_SUPPORTED_VERSION: ${{ github.event.inputs.min_supported_version }}
+
         run: |
           set -euo pipefail
+
           mkdir -p out/admin out/user
 
           process_apk() {
@@ -309,22 +429,32 @@ jobs:
 
             badging="$("$AAPT" dump badging "$apk")"
 
-            package="$(printf '%s\n' "$badging" |
-              grep -oE "package: name='[^']+'" |
-              sed "s/package: name='//;s/'//")"
+            package="$(
+              printf '%s\n' "$badging" |
+                grep -oE "package: name='[^']+'" |
+                sed "s/package: name='//;s/'//" |
+                sed -n '1p'
+            )"
 
-            version_code="$(printf '%s\n' "$badging" |
-              grep -oE "versionCode='[0-9]+'" |
-              head -n 1 |
-              sed "s/versionCode='//;s/'//")"
+            version_code="$(
+              printf '%s\n' "$badging" |
+                grep -oE "versionCode='[0-9]+'" |
+                sed "s/versionCode='//;s/'//" |
+                sed -n '1p'
+            )"
 
-            version_name="$(printf '%s\n' "$badging" |
-              grep -oE "versionName='[^']*'" |
-              head -n 1 |
-              sed "s/versionName='//;s/'//")"
+            version_name="$(
+              printf '%s\n' "$badging" |
+                grep -oE "versionName='[^']*'" |
+                sed "s/versionName='//;s/'//" |
+                sed -n '1p'
+            )"
 
-            if [ -z "$package" ] || [ -z "$version_code" ] || [ -z "$version_name" ]; then
-              echo "ERROR: Could not read APK package/version metadata: $apk"
+            if [ -z "$package" ] ||
+               [ -z "$version_code" ] ||
+               [ -z "$version_name" ]; then
+              echo "ERROR: Could not read APK package/version metadata:"
+              echo "$apk"
               return 1
             fi
 
@@ -357,9 +487,13 @@ jobs:
 
           echo "--- Admin update manifest ---"
           cat out/admin/update.json
+
           echo "--- Viewer update manifest ---"
           cat out/user/update.json
 
+      # --------------------------------------------------
+      # 12. Checkout updates repository
+      # --------------------------------------------------
       - name: Checkout updates repo
         uses: actions/checkout@v4
         with:
@@ -367,6 +501,9 @@ jobs:
           token: ${{ secrets.UPDATES_REPO_TOKEN }}
           path: updates-repo
 
+      # --------------------------------------------------
+      # 13. Publish APKs and manifests
+      # --------------------------------------------------
       - name: Publish APKs and update manifests
         shell: bash
         run: |
@@ -376,6 +513,7 @@ jobs:
 
           cp out/admin/*.apk updates-repo/admin/
           cp out/admin/update.json updates-repo/admin/update.json
+
           cp out/user/*.apk updates-repo/user/
           cp out/user/update.json updates-repo/user/update.json
 
@@ -393,6 +531,9 @@ jobs:
             git push
           fi
 
+      # --------------------------------------------------
+      # 14. Upload APKs as workflow artifacts
+      # --------------------------------------------------
       - name: Upload Release APKs as workflow artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -403,6 +544,9 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      # --------------------------------------------------
+      # 15. Upload reports if anything fails
+      # --------------------------------------------------
       - name: Upload build reports on failure
         if: failure()
         uses: actions/upload-artifact@v4
