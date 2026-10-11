@@ -71,7 +71,7 @@ fun SplashScreen(onFinished: () -> Unit) {
             )
             Spacer(Modifier.height(24.dp))
             Text(
-                "طراحی و گردآوری: علیرضا لاوی",
+                "طراحی و گردآوری: مهندس علیرضا لاوی",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
