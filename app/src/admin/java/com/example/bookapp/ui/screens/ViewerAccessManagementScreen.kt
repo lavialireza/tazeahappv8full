@@ -1,5 +1,6 @@
 package com.example.bookapp.ui.screens
 
+import com.example.bookapp.BuildConfig
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -307,13 +308,13 @@ fun ViewerAccessManagementScreen(
                 type = "application/json"
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                setPackage("com.example.bookapp.viewer")
+                setPackage(BuildConfig.VIEWER_APPLICATION_ID)
             }
             context.startActivity(intent)
             markSentIfSpecial()
             val version = ViewerAccessPolicy.getPolicyVersion(context, target)
-            context.sendBroadcast(Intent("com.example.bookapp.POLICY_CHANGED").apply {
-                setPackage("com.example.bookapp.viewer")
+            context.sendBroadcast(Intent(BuildConfig.POLICY_CHANGED_ACTION).apply {
+                setPackage(BuildConfig.VIEWER_APPLICATION_ID)
                 putExtra("targetInstallationId", target.trim().uppercase(Locale.US))
                 putExtra("policyVersion", version)
             })
