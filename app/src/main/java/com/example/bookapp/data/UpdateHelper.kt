@@ -74,7 +74,7 @@ object UpdateHelper {
             // به آدرس‌های سرور همان Flavor وصل می‌شود. اگر چند آدرس پشتیبان
             // تنظیم شده باشد، به‌ترتیب امتحان می‌شوند تا یکی جواب بدهد؛ آدرس
             // بعدی فقط وقتی امتحان می‌شود که آدرس قبلی در دسترس نبود یا خطا داد.
-            val baseUrls = BuildConfig.UPDATE_SERVER_URLS.split("|")
+            val baseUrls = (if (BuildConfig.IS_TEST_BUILD) BuildConfig.TEST_UPDATE_SERVER_URLS else BuildConfig.UPDATE_SERVER_URLS).split("|")
                 .map { it.trim().removeSuffix("/") }
                 .filter { it.isNotBlank() }
             require(baseUrls.isNotEmpty()) { "هیچ آدرس سرور بروزرسانی تنظیم نشده است." }
@@ -117,11 +117,9 @@ object UpdateHelper {
                 "سرور بروزرسانی به اتصال امن HTTPS منتقل نشد؛ بروزرسانی متوقف شد."
             }
             val json = JSONObject(connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() })
-            val expectedPackage = if (BuildConfig.PUBLIC_VIEWER) {
-                "com.example.bookapp.viewer"
-            } else {
-                "com.example.bookapp"
-            }
+            // Use the actual variant package: official IDs are unchanged, while
+            // test variants must match their independent .test package IDs.
+            val expectedPackage = BuildConfig.APPLICATION_ID
             val manifestPackage = json.optString("packageName", expectedPackage)
             if (manifestPackage != expectedPackage) {
                 throw IllegalStateException("این سرور برای نسخه دیگری از برنامه تنظیم شده است.")
@@ -211,8 +209,8 @@ object UpdateHelper {
             ?: throw IllegalStateException("فایل انتخاب‌شده یک APK معتبر نیست.")
         val packageName = archiveInfo.packageName
         val access = when (packageName) {
-            "com.example.bookapp" -> "admin"
-            "com.example.bookapp.viewer" -> "viewer"
+            "com.example.bookapp", "com.example.bookapp.test" -> "admin"
+            "com.example.bookapp.viewer", "com.example.bookapp.viewer.test" -> "viewer"
             else -> throw IllegalStateException("نام پکیج این APK ($packageName) با هیچ‌کدام از نسخه‌های این برنامه مطابقت ندارد.")
         }
         val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {

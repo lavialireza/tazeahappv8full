@@ -90,8 +90,8 @@ object ViewerAccessTransfer {
         if (target != TARGET_PUBLIC) {
             // تأیید اعمال واقعی را به Admin برمی‌گردانیم؛ این با «ارسال فایل» فرق دارد.
             runCatching {
-                context.sendBroadcast(Intent("com.example.bookapp.POLICY_APPLIED").apply {
-                    setPackage("com.example.bookapp")
+                context.sendBroadcast(Intent(com.example.bookapp.BuildConfig.POLICY_APPLIED_ACTION).apply {
+                    setPackage(com.example.bookapp.BuildConfig.ADMIN_APPLICATION_ID)
                     putExtra("installationId", ownId)
                     putExtra("policyVersion", version)
                     putExtra("policyFingerprint", payload.optString("policyFingerprint", ""))

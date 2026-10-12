@@ -9,7 +9,7 @@ import com.example.bookapp.data.ViewerAccessPolicy
 /** تأیید دریافت/اعمال سیاست از Viewer به Admin. */
 class PolicyAppliedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != "com.example.bookapp.POLICY_APPLIED") return
+        if (intent.action != BuildConfig.POLICY_APPLIED_ACTION) return
         if (com.example.bookapp.BuildConfig.PUBLIC_VIEWER) return
         val id = intent.getStringExtra("installationId")?.trim()?.uppercase(java.util.Locale.US) ?: return
         val version = intent.getIntExtra("policyVersion", 0)

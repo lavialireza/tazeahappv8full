@@ -7,7 +7,7 @@ import android.content.Intent
 /** Viewer دریافت تغییر سیاست را به‌صورت محلی ثبت می‌کند تا در اجرای بعدی به کاربر اطلاع دهد. */
 class PolicyChangedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        if (!BuildConfig.PUBLIC_VIEWER || intent?.action != "com.example.bookapp.POLICY_CHANGED") return
+        if (!BuildConfig.PUBLIC_VIEWER || intent?.action != BuildConfig.POLICY_CHANGED_ACTION) return
         val target = intent.getStringExtra("targetInstallationId") ?: "*"
         val version = intent.getIntExtra("policyVersion", 0)
         context.getSharedPreferences("viewer_access_policy", Context.MODE_PRIVATE).edit()
