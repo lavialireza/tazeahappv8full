@@ -57,6 +57,17 @@ val viewerUpdateServerUrls = updateServerUrlsProp(
 val adminUpdateServerUrlsJoined = adminUpdateServerUrls.joinToString("|")
 val viewerUpdateServerUrlsJoined = viewerUpdateServerUrls.joinToString("|")
 
+// Test builds must never point at the public production update channel by default.
+// Optional test-only endpoints can be supplied with -PUPDATE_SERVER_ADMIN_TEST_URLS / -PUPDATE_SERVER_VIEWER_TEST_URLS.
+fun testUpdateUrls(key: String): String = providers.gradleProperty(key).orNull
+    ?.split(",", "\n")
+    ?.map { it.trim().removeSuffix("/") }
+    ?.filter { it.isNotBlank() }
+    ?.joinToString("|")
+    ?: ""
+val adminTestUpdateServerUrlsJoined = testUpdateUrls("UPDATE_SERVER_ADMIN_TEST_URLS")
+val viewerTestUpdateServerUrlsJoined = testUpdateUrls("UPDATE_SERVER_VIEWER_TEST_URLS")
+
 val storeFilePath = signingProp("RELEASE_STORE_FILE")
 val hasReleaseSigning = storeFilePath != null
 // کلید امضای اختیاری و جداگانه برای Viewer (توصیه امنیتی: Admin و Viewer با دو
@@ -105,6 +116,7 @@ android {
             applicationId = "com.example.bookapp"
             buildConfigField("Boolean", "PUBLIC_VIEWER", "false")
             buildConfigField("String", "UPDATE_SERVER_URLS", "\"${adminUpdateServerUrlsJoined}\"")
+            buildConfigField("String", "TEST_UPDATE_SERVER_URLS", "\"${adminTestUpdateServerUrlsJoined}\"")
             buildConfigField("String", "SYNC_SERVER_URL", "\"\"")
             // کلید خصوصی امضای Policy فقط برای Admin — هرگز در Viewer تعریف نمی‌شود.
             buildConfigField("String", "POLICY_PRIVATE_KEY", "\"$policyPrivateKeyBase64\"")
@@ -121,6 +133,7 @@ android {
             applicationId = "com.example.bookapp.viewer"
             buildConfigField("Boolean", "PUBLIC_VIEWER", "true")
             buildConfigField("String", "UPDATE_SERVER_URLS", "\"${viewerUpdateServerUrlsJoined}\"")
+            buildConfigField("String", "TEST_UPDATE_SERVER_URLS", "\"${viewerTestUpdateServerUrlsJoined}\"")
             buildConfigField("String", "SYNC_SERVER_URL", "\"\"")
             manifestPlaceholders["appLabel"] = "تعزیه و شبیه‌خوانی"
             if (hasViewerReleaseSigning) {
@@ -150,6 +163,13 @@ android {
             setRoot("src/admin")
             assets.setSrcDirs(listOf("src/admin/assets"))
         }
+
+        // آیکن‌های تولیدشده از custom_icons به‌صورت منبع موقت build اضافه می‌شوند.
+        // فایل‌های تولیدشده داخل build/ هستند و سورس اصلی برنامه را آلوده نمی‌کنند.
+        getByName("admin").res.srcDir(layout.buildDirectory.dir("generated/custom-icons/admin/res"))
+        getByName("viewer").res.srcDir(layout.buildDirectory.dir("generated/custom-icons/viewer/res"))
+        maybeCreate("adminQa").res.srcDir(layout.buildDirectory.dir("generated/custom-icons/adminQa/res"))
+        maybeCreate("viewerQa").res.srcDir(layout.buildDirectory.dir("generated/custom-icons/viewerQa/res"))
     }
 
 
@@ -174,6 +194,19 @@ android {
     val effectiveBuildNumber = ciReleaseNumber ?: gitCommitCount
 
     defaultConfig {
+        // Shared inter-app policy channel for the two official APKs.
+        // The test build type overrides these with an isolated namespace so test APKs
+        // can coexist with official installs without permission/action collisions.
+        buildConfigField("Boolean", "IS_TEST_BUILD", "false")
+        buildConfigField("String", "POLICY_APPLIED_ACTION", "\"com.example.bookapp.POLICY_APPLIED\"")
+        buildConfigField("String", "POLICY_CHANGED_ACTION", "\"com.example.bookapp.POLICY_CHANGED\"")
+        buildConfigField("String", "POLICY_APPLIED_PERMISSION", "\"com.example.bookapp.permission.POLICY_APPLIED\"")
+        buildConfigField("String", "ADMIN_APPLICATION_ID", "\"com.example.bookapp\"")
+        buildConfigField("String", "VIEWER_APPLICATION_ID", "\"com.example.bookapp.viewer\"")
+        manifestPlaceholders["policyAppliedPermission"] = "com.example.bookapp.permission.POLICY_APPLIED"
+        manifestPlaceholders["policyAppliedAction"] = "com.example.bookapp.POLICY_APPLIED"
+        manifestPlaceholders["policyChangedAction"] = "com.example.bookapp.POLICY_CHANGED"
+        manifestPlaceholders["appLabelSuffix"] = ""
         minSdk = 23
         targetSdk = 34
         // شماره نسخه/برچسب هر build به‌صورت خودکار از تاریخچه Git ساخته می‌شود
@@ -203,6 +236,27 @@ android {
             // چنین APK ای فقط برای تست داخلی قابل‌نصب است، نه انتشار در فروشگاه.
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+        // Independently installable QA builds: app IDs are suffixed with .test,
+        // app data and inter-app policy broadcasts are isolated, and no production
+        // update endpoint is embedded. Official Release variants remain unchanged.
+        create("qa") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".test"
+            versionNameSuffix = "-TEST"
+            signingConfig = signingConfigs.getByName("debug")
+            manifestPlaceholders["appLabelSuffix"] = " — آزمایشی"
+            manifestPlaceholders["policyAppliedPermission"] = "com.example.bookapp.test.permission.POLICY_APPLIED"
+            manifestPlaceholders["policyAppliedAction"] = "com.example.bookapp.test.POLICY_APPLIED"
+            manifestPlaceholders["policyChangedAction"] = "com.example.bookapp.test.POLICY_CHANGED"
+            buildConfigField("Boolean", "IS_TEST_BUILD", "true")
+            buildConfigField("String", "UPDATE_SERVER_URLS", "\"\"")
+            buildConfigField("String", "POLICY_APPLIED_ACTION", "\"com.example.bookapp.test.POLICY_APPLIED\"")
+            buildConfigField("String", "POLICY_CHANGED_ACTION", "\"com.example.bookapp.test.POLICY_CHANGED\"")
+            buildConfigField("String", "POLICY_APPLIED_PERMISSION", "\"com.example.bookapp.test.permission.POLICY_APPLIED\"")
+            buildConfigField("String", "ADMIN_APPLICATION_ID", "\"com.example.bookapp.test\"")
+            buildConfigField("String", "VIEWER_APPLICATION_ID", "\"com.example.bookapp.viewer.test\"")
+            // Optional test endpoints live in TEST_UPDATE_SERVER_URLS, never in the production URL field.
+        }
     }
 
     compileOptions {
@@ -227,6 +281,32 @@ android {
     }
 }
 
+
+// لوگوهای سفارشی: پیش از ادغام منابع هر APK از پوشه custom_icons خوانده می‌شوند.
+// نام فایل‌ها: admin.png، viewer.png، admin_test.png و viewer_test.png.
+val prepareCustomLauncherIcons = tasks.register("prepareCustomLauncherIcons") {
+    val iconInputs = rootProject.file("custom_icons")
+    val generatedIcons = layout.buildDirectory.dir("generated/custom-icons")
+    inputs.dir(iconInputs)
+    outputs.dir(generatedIcons)
+    doLast {
+        exec {
+            commandLine(
+                "java",
+                "-Djava.awt.headless=true",
+                rootProject.file("tools/GenerateLauncherIcons.java").absolutePath,
+                iconInputs.absolutePath,
+                generatedIcons.get().asFile.absolutePath
+            )
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name == "preBuild" || (name.startsWith("merge") && name.endsWith("Resources"))) {
+        dependsOn(prepareCustomLauncherIcons)
+    }
+}
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
